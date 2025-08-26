@@ -1,0 +1,41 @@
+{
+  "mcpServers": {
+    "linear-server": {
+      "type": "sse",
+      "url": "https://mcp.linear.app/sse"
+    },
+    "sequential-thinking": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+    },
+    "time-mcp": {
+      "command": "npx",
+      "args": ["-y", "time-mcp"]
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["@playwright/mcp@latest"]
+    },
+    "context7": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp"],
+      "env": {}
+    },
+    "@21st-dev/magic": {
+        "command": "npx",
+        "args": ["-y", "@21st-dev/magic@latest"],
+        "env": {
+          "API_KEY": "af084b8c2b9cf7d20c62ed46fb015246b017366f5dc635563f893640be186852"
+        }
+      },
+    "postgres": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-postgres",
+        "postgresql://postgres:postgres@localhost:5432/draw_engine"
+      ]
+    }
+  }
+}

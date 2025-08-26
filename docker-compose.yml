@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  # Backend API Service
+  backend:
+    build: ./backend
+    container_name: survey-backend
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      # Add your API keys here or use .env file
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+    volumes:
+      # Persistent storage for LLM prompts and data
+      - survey_data:/app/data
+    networks:
+      - survey_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Frontend Web Service  
+  frontend:
+    build: ./survey-tool
+    container_name: survey-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - survey_network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  survey_network:
+    driver: bridge
+
+volumes:
+  # Persistent volume for backend data (LLM prompts, etc.)
+  survey_data:
+    driver: local
