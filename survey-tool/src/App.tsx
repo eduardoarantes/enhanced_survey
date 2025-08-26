@@ -4,7 +4,7 @@ import ConfigurationPanel from './components/ConfigurationPanel'
 import SurveyForm from './components/SurveyForm'
 import SurveyResults from './components/SurveyResults'
 import type { SubmitSurveyResponse } from './services/llmService'
-import { getLLMPrompt, type LLMPromptData } from './services/llmService'
+import { getLLMPrompt, loadConfiguration, type LLMPromptData, type ConfigurationData } from './services/llmService'
 
 export interface Question {
   id: string
@@ -44,19 +44,52 @@ function App() {
   const [selectedModel, setSelectedModel] = useState<'chatgpt' | 'gemini'>('gemini')
   const [isConfigOpen, setIsConfigOpen] = useState(false)
   const [submissionData, setSubmissionData] = useState<SubmitSurveyResponse | null>(null)
+  
+  // Configuration persistence states
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
+  const [lastSavedConfig, setLastSavedConfig] = useState<ConfigurationData | null>(null)
 
-  // Load LLM prompt from backend on mount
+  // Load configuration and LLM prompt from backend on mount
   useEffect(() => {
-    const loadPrompt = async () => {
+    const loadData = async () => {
       try {
+        // Load configuration
+        const configData = await loadConfiguration()
+        setConfig({ questions: configData.questions })
+        setValidationTrigger(configData.validationTrigger)
+        setSelectedModel(configData.selectedModel)
+        setLastSavedConfig(configData)
+        
+        // Load LLM prompt
         const promptData = await getLLMPrompt()
         setLlmPrompt(promptData)
+        
+        console.log('Configuration loaded successfully')
       } catch (error) {
-        console.error('Failed to load LLM prompt:', error)
+        console.error('Failed to load configuration:', error)
       }
     }
-    loadPrompt()
+    loadData()
   }, [])
+
+  // Track changes to detect unsaved modifications
+  useEffect(() => {
+    if (lastSavedConfig) {
+      const currentConfig: ConfigurationData = {
+        validationTrigger,
+        selectedModel,
+        questions: config.questions
+      }
+      
+      const hasChanges = JSON.stringify(currentConfig) !== JSON.stringify({
+        validationTrigger: lastSavedConfig.validationTrigger,
+        selectedModel: lastSavedConfig.selectedModel,
+        questions: lastSavedConfig.questions
+      })
+      
+      setHasUnsavedChanges(hasChanges)
+    }
+  }, [config, validationTrigger, selectedModel, lastSavedConfig])
 
   const handleSubmissionComplete = (data: SubmitSurveyResponse) => {
     setSubmissionData(data)
@@ -65,6 +98,41 @@ function App() {
 
   const handleBackToSurvey = () => {
     setSubmissionData(null)
+  }
+
+  // Handle configuration save
+  const handleConfigSave = async (): Promise<boolean> => {
+    try {
+      const configToSave: ConfigurationData = {
+        validationTrigger,
+        selectedModel,
+        questions: config.questions
+      }
+      
+      const { saveConfiguration } = await import('./services/llmService')
+      await saveConfiguration(configToSave)
+      setLastSavedConfig(configToSave)
+      setHasUnsavedChanges(false)
+      console.log('Configuration saved successfully')
+      return true
+    } catch (error) {
+      console.error('Failed to save configuration:', error)
+      alert('Failed to save configuration. Please try again.')
+      return false
+    }
+  }
+
+  // Handle configuration panel close with unsaved changes check
+  const handleConfigClose = () => {
+    if (hasUnsavedChanges) {
+      const shouldClose = window.confirm(
+        'You have unsaved changes. Are you sure you want to close without saving?'
+      )
+      if (!shouldClose) {
+        return
+      }
+    }
+    setIsConfigOpen(false)
   }
 
   return (
@@ -143,7 +211,9 @@ function App() {
                   setValidationTrigger={setValidationTrigger}
                   selectedModel={selectedModel}
                   setSelectedModel={setSelectedModel}
-                  onClose={() => setIsConfigOpen(false)}
+                  onClose={handleConfigClose}
+                  onSave={handleConfigSave}
+                  hasUnsavedChanges={hasUnsavedChanges}
                 />
               </div>
             </div>
@@ -153,7 +223,7 @@ function App() {
           {!submissionData && isConfigOpen && (
             <div
               className="fixed inset-0 top-16 bg-black/20 backdrop-blur-sm z-20"
-              onClick={() => setIsConfigOpen(false)}
+              onClick={handleConfigClose}
             />
           )}
         </div>

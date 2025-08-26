@@ -2,3 +2,4 @@ backend/.env
 backend/node_modules
 .claude
 .playwright-mcp
+lottery-key-pair.pem

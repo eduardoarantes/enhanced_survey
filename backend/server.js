@@ -457,6 +457,169 @@ app.post('/api/submit', (req, res) => {
   }
 });
 
+// Configuration persistence endpoints
+const CONFIG_FILE_PATH = path.join(__dirname, 'data', 'survey-config.json');
+
+// Default configuration
+const DEFAULT_CONFIG = {
+  validationTrigger: 'blur',
+  selectedModel: 'gemini',
+  questions: [
+    {
+      id: '1',
+      type: 'single-choice',
+      question: 'Which score do you give to the service?',
+      options: ['1', '2', '3', '4', '5'],
+      required: true
+    },
+    {
+      id: '2',
+      type: 'text',
+      question: 'Why did you give this score?',
+      required: true
+    }
+  ]
+};
+
+// Load configuration from file
+const loadConfiguration = () => {
+  try {
+    if (fs.existsSync(CONFIG_FILE_PATH)) {
+      const configData = fs.readFileSync(CONFIG_FILE_PATH, 'utf8').trim();
+      if (configData) {
+        return JSON.parse(configData);
+      }
+    }
+    return DEFAULT_CONFIG;
+  } catch (error) {
+    console.error('Error loading configuration:', error);
+    return DEFAULT_CONFIG;
+  }
+};
+
+// Save configuration to file
+const saveConfiguration = (configData) => {
+  try {
+    ensureDataDirectory();
+    fs.writeFileSync(CONFIG_FILE_PATH, JSON.stringify(configData, null, 2), 'utf8');
+    console.log('Configuration saved to file:', CONFIG_FILE_PATH);
+    return true;
+  } catch (error) {
+    console.error('Error saving configuration:', error);
+    return false;
+  }
+};
+
+// Get current configuration
+app.get('/api/config', (req, res) => {
+  try {
+    const config = loadConfiguration();
+    res.json({
+      success: true,
+      config,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Error getting configuration:', error);
+    res.status(500).json({
+      error: 'Internal server error',
+      message: 'Failed to load configuration'
+    });
+  }
+});
+
+// Save configuration
+app.post('/api/config', (req, res) => {
+  try {
+    const { validationTrigger, selectedModel, questions } = req.body;
+    
+    // Validate required fields
+    if (!validationTrigger || !selectedModel || !questions) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        message: 'validationTrigger, selectedModel, and questions are required'
+      });
+    }
+
+    // Validate validation trigger
+    if (!['blur', 'submit'].includes(validationTrigger)) {
+      return res.status(400).json({
+        error: 'Invalid validation trigger',
+        message: 'validationTrigger must be either "blur" or "submit"'
+      });
+    }
+
+    // Validate selected model
+    if (!['chatgpt', 'gemini'].includes(selectedModel)) {
+      return res.status(400).json({
+        error: 'Invalid model',
+        message: 'selectedModel must be either "chatgpt" or "gemini"'
+      });
+    }
+
+    // Validate questions array
+    if (!Array.isArray(questions) || questions.length === 0) {
+      return res.status(400).json({
+        error: 'Invalid questions',
+        message: 'questions must be a non-empty array'
+      });
+    }
+
+    // Validate each question
+    for (const question of questions) {
+      if (!question.id || !question.type || !question.question) {
+        return res.status(400).json({
+          error: 'Invalid question format',
+          message: 'Each question must have id, type, and question fields'
+        });
+      }
+      
+      if (!['text', 'single-choice', 'multiple-choice'].includes(question.type)) {
+        return res.status(400).json({
+          error: 'Invalid question type',
+          message: 'Question type must be "text", "single-choice", or "multiple-choice"'
+        });
+      }
+      
+      if ((question.type === 'single-choice' || question.type === 'multiple-choice') && 
+          (!question.options || !Array.isArray(question.options) || question.options.length === 0)) {
+        return res.status(400).json({
+          error: 'Invalid question options',
+          message: 'Choice questions must have a non-empty options array'
+        });
+      }
+    }
+
+    const configData = {
+      validationTrigger,
+      selectedModel,
+      questions,
+      lastModified: new Date().toISOString()
+    };
+
+    const success = saveConfiguration(configData);
+    if (success) {
+      res.json({
+        success: true,
+        message: 'Configuration saved successfully',
+        config: configData,
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      res.status(500).json({
+        error: 'Save failed',
+        message: 'Failed to save configuration to file'
+      });
+    }
+  } catch (error) {
+    console.error('Error saving configuration:', error);
+    res.status(500).json({
+      error: 'Internal server error',
+      message: 'Failed to save configuration'
+    });
+  }
+});
+
 // Cleanup old sessions periodically (every 5 minutes)
 setInterval(() => {
   const now = Date.now();

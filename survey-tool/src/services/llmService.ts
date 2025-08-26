@@ -212,3 +212,82 @@ export async function updateLLMPrompt(promptData: LLMPromptData): Promise<boolea
   
   return false;
 }
+
+// Configuration management types and functions
+export interface ConfigurationData {
+  validationTrigger: 'blur' | 'submit';
+  selectedModel: 'chatgpt' | 'gemini';
+  questions: Array<{
+    id: string;
+    type: 'text' | 'single-choice' | 'multiple-choice';
+    question: string;
+    options?: string[];
+    required?: boolean;
+  }>;
+  lastModified?: string;
+}
+
+export interface ConfigurationResponse {
+  success: boolean;
+  config: ConfigurationData;
+  message?: string;
+  timestamp: string;
+}
+
+export async function loadConfiguration(): Promise<ConfigurationData> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/config`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.message || `HTTP ${response.status}`);
+    }
+
+    const data: ConfigurationResponse = await response.json();
+    return data.config;
+  } catch (error) {
+    console.error('Error loading configuration:', error);
+    // Return default configuration on error
+    return {
+      validationTrigger: 'blur',
+      selectedModel: 'gemini',
+      questions: [
+        {
+          id: '1',
+          type: 'single-choice',
+          question: 'Which score do you give to the service?',
+          options: ['1', '2', '3', '4', '5'],
+          required: true
+        },
+        {
+          id: '2',
+          type: 'text',
+          question: 'Why did you give this score?',
+          required: true
+        }
+      ]
+    };
+  }
+}
+
+export async function saveConfiguration(config: ConfigurationData): Promise<ConfigurationResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/config`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(config),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json();
+    throw new Error(errorData.message || `HTTP ${response.status}`);
+  }
+
+  return await response.json();
+}

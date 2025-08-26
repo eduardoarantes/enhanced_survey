@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
 import Editor from '@monaco-editor/react'
-import { Key, Zap, Code, AlertTriangle, X, Brain, Sparkles } from 'lucide-react'
+import { Key, Zap, Code, AlertTriangle, X, Brain, Sparkles, Save } from 'lucide-react'
 import type { SurveyConfig } from '../App'
 import { updateLLMPrompt, type LLMPromptData } from '../services/llmService'
 
@@ -14,6 +14,8 @@ interface ConfigurationPanelProps {
   selectedModel: 'chatgpt' | 'gemini'
   setSelectedModel: (model: 'chatgpt' | 'gemini') => void
   onClose?: () => void
+  onSave?: () => Promise<boolean>
+  hasUnsavedChanges?: boolean
 }
 
 export default function ConfigurationPanel({
@@ -25,11 +27,32 @@ export default function ConfigurationPanel({
   setValidationTrigger,
   selectedModel,
   setSelectedModel,
-  onClose
+  onClose,
+  onSave,
+  hasUnsavedChanges = false
 }: ConfigurationPanelProps) {
   const [jsonError, setJsonError] = useState<string>('')
   const [promptChanged, setPromptChanged] = useState(false)
   const [currentPrompt, setCurrentPrompt] = useState(llmPrompt)
+  const [isSaving, setIsSaving] = useState(false)
+
+  // Handle save configuration
+  const handleSave = async () => {
+    if (!onSave) return
+    
+    setIsSaving(true)
+    try {
+      // Save LLM prompt changes first if any
+      if (promptChanged) {
+        await savePromptToBackend()
+      }
+      
+      // Save main configuration
+      await onSave()
+    } finally {
+      setIsSaving(false)
+    }
+  }
 
   const handleSystemPromptChange = useCallback((value: string | undefined) => {
     if (!value) return
@@ -102,19 +125,43 @@ export default function ConfigurationPanel({
               <Key className="w-4 h-4 text-white" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-gray-900">Configuration</h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-semibold text-gray-900">Configuration</h2>
+                {hasUnsavedChanges && (
+                  <span className="inline-flex items-center px-2 py-1 text-xs font-medium text-amber-700 bg-amber-100 rounded-full">
+                    Unsaved changes
+                  </span>
+                )}
+              </div>
               <p className="text-sm text-gray-500">Configure your survey settings</p>
             </div>
           </div>
           
-          {onClose && (
-            <button
-              onClick={handlePanelClose}
-              className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors duration-200"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {onSave && (
+              <button
+                onClick={handleSave}
+                disabled={isSaving || (!hasUnsavedChanges && !promptChanged)}
+                className={`flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg transition-colors duration-200 ${
+                  isSaving || (!hasUnsavedChanges && !promptChanged)
+                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                    : 'bg-blue-600 text-white hover:bg-blue-700'
+                }`}
+              >
+                <Save className="w-4 h-4" />
+                {isSaving ? 'Saving...' : 'Save'}
+              </button>
+            )}
+            
+            {onClose && (
+              <button
+                onClick={handlePanelClose}
+                className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors duration-200"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
 

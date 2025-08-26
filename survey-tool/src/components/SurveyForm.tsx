@@ -160,13 +160,75 @@ export default function SurveyForm({
 
     try {
       if (validationTrigger === 'submit') {
-        // Validate all text answers on submit
+        // First, validate all text questions that have answers
         const textQuestions = config.questions.filter(q => q.type === 'text')
+        const validationPromises: Promise<void>[] = []
+        
         for (const question of textQuestions) {
           const answer = answers[question.id]
-          if (answer && typeof answer.value === 'string' && answer.value.trim()) {
-            await validateAnswer(question.id, answer.value)
+          // Only validate if there's an answer and it hasn't been validated yet
+          if (answer && typeof answer.value === 'string' && answer.value.trim() && 
+              answer.isValid === undefined) {
+            validationPromises.push(validateAnswer(question.id, answer.value))
           }
+        }
+
+        // Wait for all validations to complete
+        if (validationPromises.length > 0) {
+          await Promise.all(validationPromises)
+          
+          // Wait for state updates (config and answers)
+          await new Promise(resolve => setTimeout(resolve, 500))
+        }
+
+        // Final check for any unanswered follow-up questions
+        const unansweredFollowUps = config.questions.filter(q => {
+          // Check if this is a follow-up question (has '-followup-' in id)
+          if (q.id.includes('-followup-')) {
+            const answer = answers[q.id]
+            // If no answer or empty answer, it's unanswered
+            return !answer || !answer.value || (typeof answer.value === 'string' && !answer.value.trim())
+          }
+          return false
+        })
+
+        if (unansweredFollowUps.length > 0) {
+          // There are unanswered follow-up questions, halt submission
+          setIsSubmitting(false)
+          
+          // Scroll to the first unanswered follow-up question
+          const firstUnanswered = unansweredFollowUps[0]
+          const element = document.getElementById(`question-${firstUnanswered.id}`)
+          if (element) {
+            element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          }
+          
+          // Show message to user
+          const message = unansweredFollowUps.length === 1 
+            ? 'Please answer the follow-up question before submitting.'
+            : `Please answer the ${unansweredFollowUps.length} follow-up questions before submitting.`
+          
+          // Show a temporary notification (you could replace this with a toast notification)
+          const notification = document.createElement('div')
+          notification.className = 'fixed top-4 right-4 bg-yellow-100 border-l-4 border-yellow-500 p-4 rounded-lg shadow-lg z-50'
+          notification.innerHTML = `
+            <div class="flex items-center">
+              <svg class="w-5 h-5 text-yellow-500 mr-3" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
+              </svg>
+              <span class="text-yellow-800">${message}</span>
+            </div>
+          `
+          document.body.appendChild(notification)
+          
+          // Remove notification after 4 seconds
+          setTimeout(() => {
+            if (document.body.contains(notification)) {
+              document.body.removeChild(notification)
+            }
+          }, 4000)
+          
+          return // Stop submission
         }
       }
 
@@ -194,6 +256,7 @@ export default function SurveyForm({
     return (
       <div
         key={question.id}
+        id={`question-${question.id}`}
         className={`group transition-all duration-200 ${
           isFollowUp 
             ? 'bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 shadow-sm rounded-2xl p-6 ml-6 relative' 
