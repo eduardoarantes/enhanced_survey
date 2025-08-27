@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
-import { FileText, CheckCircle, AlertCircle, Loader2, MessageSquare, Star, WifiOff } from 'lucide-react'
+import { FileText, CheckCircle, AlertCircle, Loader2, MessageSquare, Star, WifiOff, AlertTriangle } from 'lucide-react'
 import { validateAnswer as validateAnswerAPI, checkBackendHealth, getSessionStatus, submitSurvey, type SubmitSurveyResponse } from '../services/llmService'
 import type { SurveyConfig, Question } from '../App'
 
@@ -25,6 +25,24 @@ interface SessionStatus {
   nextResetAt?: number
 }
 
+// New interfaces for enhanced validation logic (CARD_1)
+interface ValidationResult {
+  questionId: string
+  isValid: boolean | undefined
+  followUpQuestion?: string
+  originalQuestion: string
+  originalAnswer: string
+  error?: string
+}
+
+interface BatchValidationResult {
+  results: ValidationResult[]
+  hasFollowUps: boolean
+  errors: string[]
+  completedCount: number
+  totalCount: number
+}
+
 export default function SurveyForm({
   config,
   setConfig,
@@ -32,10 +50,15 @@ export default function SurveyForm({
   selectedModel,
   onSubmissionComplete
 }: SurveyFormProps) {
+  console.log('🔥 SURVEYFORM COMPONENT LOADED - Debug Check')
   const [answers, setAnswers] = useState<Record<string, Answer>>({})
-  const [isSubmitting, setIsSubmitting] = useState(false)
   const [backendConnected, setBackendConnected] = useState(true)
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>({ requestsInWindow: 0, maxRequests: 10 })
+  
+  // New state variables for enhanced submission flow (CARD_2)
+  const [submissionStatus, setSubmissionStatus] = useState<'idle' | 'validating' | 'halted' | 'submitting'>('idle')
+  const [notificationMessage, setNotificationMessage] = useState<string>('')
+  const [showNotification, setShowNotification] = useState(false)
 
   // Check backend connectivity on mount
   useEffect(() => {
@@ -76,20 +99,20 @@ export default function SurveyForm({
       const question = config.questions.find(q => q.id === questionId)
       if (!question) return
 
-      // Get score from previous answers if this is a follow-up question
-      const scoreAnswer = config.questions.find(q => q.type === 'single-choice')
-      const scoreValue = scoreAnswer ? answers[scoreAnswer.id]?.value : undefined
-      const score = Array.isArray(scoreValue) ? scoreValue[0] : scoreValue
+      const scoreAnswer = findScoreAnswer(answers)
+      const response = await validateAnswerAPI(question.question, answer, selectedModel, scoreAnswer)
       
-      const response = await validateAnswerAPI(question.question, answer, selectedModel, score)
+      // Use new pure function for parsing
+      const validationResult = parseValidationResponse(response, questionId, question.question, answer)
       
+      // Update state with validation result (existing logic)
       setAnswers(prev => ({
         ...prev,
         [questionId]: {
           ...prev[questionId],
           isValidating: false,
-          isValid: response.isValid,
-          followUpQuestion: response.followUpQuestion
+          isValid: validationResult.isValid,
+          followUpQuestion: validationResult.followUpQuestion
         }
       }))
 
@@ -101,14 +124,9 @@ export default function SurveyForm({
         console.error('Failed to update session status:', error)
       }
 
-      // If insufficient, add follow-up question
-      if (!response.isValid && response.followUpQuestion) {
-        const newQuestion: Question = {
-          id: `${questionId}-followup-${Date.now()}`,
-          type: 'text',
-          question: response.followUpQuestion,
-          required: true
-        }
+      // If insufficient, add follow-up question using pure function
+      if (!validationResult.isValid && validationResult.followUpQuestion) {
+        const newQuestion = createFollowUpQuestion(validationResult)
 
         const questionIndex = config.questions.findIndex((q: Question) => q.id === questionId)
         const newQuestions = [...config.questions]
@@ -135,14 +153,47 @@ export default function SurveyForm({
   }, [selectedModel, config.questions, setConfig, sessionStatus])
 
   const handleTextChange = useCallback((questionId: string, value: string) => {
-    setAnswers(prev => ({
-      ...prev,
-      [questionId]: { questionId, value }
-    }))
+    setAnswers(prev => {
+      const updated = { ...prev }
+      
+      if (isFollowUpQuestion(questionId)) {
+        // For follow-up questions, only do simple validation
+        const validation = validateFollowUpAnswer(questionId, value)
+        updated[questionId] = {
+          questionId,
+          value,
+          isValid: validation.isComplete,
+          isValidating: false
+        }
+      } else {
+        // For original questions, maintain existing behavior
+        updated[questionId] = {
+          questionId,
+          value
+        }
+      }
+      
+      return updated
+    })
   }, [])
 
   const handleTextBlur = useCallback((questionId: string, value: string) => {
-    if (validationTrigger === 'blur' && value.trim()) {
+    if (isFollowUpQuestion(questionId)) {
+      // Follow-up questions: only validate text presence, no AI validation
+      const validation = validateFollowUpAnswer(questionId, value)
+      
+      setAnswers(prev => ({
+        ...prev,
+        [questionId]: {
+          ...prev[questionId],
+          questionId,
+          value,
+          isValid: validation.isComplete,
+          isValidating: false
+        }
+      }))
+    } else if (validationTrigger === 'blur' && value.trim()) {
+      // Original questions: trigger AI validation if in blur mode
       validateAnswer(questionId, value)
     }
   }, [validationTrigger, validateAnswer])
@@ -154,86 +205,203 @@ export default function SurveyForm({
     }))
   }, [])
 
+  // Helper functions for new submission flow (CARD_2)
+  const showSubmissionNotification = useCallback((message: string, duration = 4000) => {
+    setNotificationMessage(message)
+    setShowNotification(true)
+    
+    setTimeout(() => {
+      setShowNotification(false)
+      setNotificationMessage('')
+    }, duration)
+  }, [])
+
+  const detectNewFollowUps = (validationResults: ValidationResult[]): boolean => {
+    return validationResults.some(result => 
+      result.followUpQuestion !== undefined && result.followUpQuestion.trim().length > 0
+    )
+  }
+
+  const getFollowUpQuestions = (validationResults: ValidationResult[]): Question[] => {
+    return validationResults
+      .filter(result => result.followUpQuestion !== undefined)
+      .map(result => createFollowUpQuestion(result))
+  }
+
+  const injectFollowUpQuestions = useCallback((followUpQuestions: Question[]) => {
+    const newQuestions = [...config.questions]
+    
+    followUpQuestions.forEach(followUp => {
+      // Find the original question and insert follow-up after it
+      const originalQuestionId = followUp.id.split('-followup-')[0]
+      const originalIndex = newQuestions.findIndex(q => q.id === originalQuestionId)
+      
+      if (originalIndex !== -1) {
+        // Check if this follow-up already exists to avoid duplicates
+        const followUpExists = newQuestions.some(q => q.id === followUp.id)
+        if (!followUpExists) {
+          newQuestions.splice(originalIndex + 1, 0, followUp)
+        }
+      }
+    })
+    
+    setConfig({ ...config, questions: newQuestions })
+  }, [config, setConfig])
+
+  const updateAnswersWithValidationResults = useCallback((results: ValidationResult[]) => {
+    setAnswers(prev => {
+      const updated = { ...prev }
+      results.forEach(result => {
+        updated[result.questionId] = {
+          ...updated[result.questionId],
+          questionId: result.questionId,
+          value: updated[result.questionId]?.value || result.originalAnswer,
+          isValidating: false,
+          isValid: result.isValid,
+          followUpQuestion: result.followUpQuestion
+        }
+      })
+      return updated
+    })
+  }, [])
+
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault()
-    setIsSubmitting(true)
+    console.log('🔥🔥🔥 HANDLESUBMIT CALLED - BASIC CHECK')
+    console.log('🚀 FORM SUBMISSION STARTED')
+    console.log('📋 Validation Trigger:', validationTrigger)
+    console.log('📝 Current Answers:', answers)
+    console.log('❓ Current Questions:', config.questions)
+    
+    setSubmissionStatus('validating')
 
     try {
       if (validationTrigger === 'submit') {
-        // First, validate all text questions that have answers
-        const textQuestions = config.questions.filter(q => q.type === 'text')
-        const validationPromises: Promise<void>[] = []
+        console.log('🔄 BATCH VALIDATION MODE DETECTED')
         
-        for (const question of textQuestions) {
-          const answer = answers[question.id]
-          // Only validate if there's an answer and it hasn't been validated yet
-          if (answer && typeof answer.value === 'string' && answer.value.trim() && 
-              answer.isValid === undefined) {
-            validationPromises.push(validateAnswer(question.id, answer.value))
+        // STEP 1: Collect questions that need batch validation
+        const questionsToValidate = config.questions
+          .filter(q => q.type === 'text')
+          .map(question => ({
+            questionId: question.id,
+            question: question.question,
+            answer: (answers[question.id]?.value as string) || ''
+          }))
+          .filter(item => 
+            item.answer.trim() && // Has content to validate
+            answers[item.questionId]?.isValid === undefined // Not already validated
+          )
+
+        console.log('📊 Questions to validate:', questionsToValidate)
+        console.log('🔍 Questions already validated:', config.questions.filter(q => 
+          answers[q.id]?.isValid !== undefined
+        ).map(q => ({ id: q.id, isValid: answers[q.id]?.isValid })))
+
+        let batchResults: BatchValidationResult | null = null
+
+        // STEP 2: Run batch validation if needed
+        if (questionsToValidate.length > 0) {
+          console.log('🤖 Sending batch validation request...')
+          batchResults = await validateAnswersBatch(questionsToValidate, selectedModel, answers)
+          console.log('✅ Batch validation completed:', batchResults)
+          
+          // Update answers state with validation results
+          updateAnswersWithValidationResults(batchResults.results)
+          console.log('🔄 Updated validation results in state')
+          
+          // Handle validation errors
+          if (batchResults.errors.length > 0) {
+            console.error('❌ Validation errors:', batchResults.errors)
+            showSubmissionNotification(
+              `Validation failed for ${batchResults.errors.length} question(s). Please try again.`
+            )
+            setSubmissionStatus('idle')
+            return
           }
+        } else {
+          console.log('⚡ No questions need validation, skipping batch validation')
         }
 
-        // Wait for all validations to complete
-        if (validationPromises.length > 0) {
-          await Promise.all(validationPromises)
+        // STEP 3: Check for newly generated follow-up questions
+        console.log('🔍 Checking for follow-up questions...')
+        const hasNewFollowUps = batchResults ? detectNewFollowUps(batchResults.results) : false
+        console.log('🎯 Has new follow-ups:', hasNewFollowUps)
+        
+        if (batchResults?.results) {
+          console.log('📋 Individual validation results:')
+          batchResults.results.forEach(result => {
+            console.log(`  - Q${result.questionId}: valid=${result.isValid}, followUp="${result.followUpQuestion || 'none'}"`)
+          })
+        }
+        
+        if (hasNewFollowUps) {
+          console.log('⛔ HALTING SUBMISSION - Follow-ups detected!')
+          // HALT SUBMISSION - Follow-ups were generated
+          const followUpQuestions = getFollowUpQuestions(batchResults!.results)
+          console.log('📝 Generated follow-up questions:', followUpQuestions)
           
-          // Wait for state updates (config and answers)
-          await new Promise(resolve => setTimeout(resolve, 500))
+          // Inject follow-up questions into config
+          injectFollowUpQuestions(followUpQuestions)
+          
+          // Show notification to user
+          const message = followUpQuestions.length === 1 
+            ? 'A follow-up question has been added. Please answer it before submitting.'
+            : `${followUpQuestions.length} follow-up questions have been added. Please answer them before submitting.`
+          
+          showSubmissionNotification(message)
+          
+          // Scroll to first follow-up question
+          setTimeout(() => {
+            const firstFollowUp = followUpQuestions[0]
+            if (firstFollowUp) {
+              const element = document.getElementById(`question-${firstFollowUp.id}`)
+              if (element) {
+                element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+              }
+            }
+          }, 100) // Small delay to ensure DOM is updated
+          
+          setSubmissionStatus('halted')
+          console.log('⛔ SUBMISSION HALTED - Returning from handleSubmit')
+          return // CRITICAL: Stop execution here
+        } else {
+          console.log('✅ No new follow-ups detected, continuing...')
         }
 
-        // Final check for any unanswered follow-up questions
-        const unansweredFollowUps = config.questions.filter(q => {
-          // Check if this is a follow-up question (has '-followup-' in id)
-          if (q.id.includes('-followup-')) {
-            const answer = answers[q.id]
-            // If no answer or empty answer, it's unanswered
-            return !answer || !answer.value || (typeof answer.value === 'string' && !answer.value.trim())
-          }
-          return false
-        })
+        // STEP 4: Check for unanswered existing follow-up questions
+        console.log('🔍 Checking for existing unanswered follow-ups...')
+        const followUpStatus = getFollowUpCompletionStatus(config.questions, answers)
+        console.log('📊 Follow-up status:', followUpStatus)
 
-        if (unansweredFollowUps.length > 0) {
-          // There are unanswered follow-up questions, halt submission
-          setIsSubmitting(false)
+        if (followUpStatus.total > 0 && !followUpStatus.allComplete) {
+          console.log('⛔ HALTING SUBMISSION - Unanswered follow-ups exist!')
+          // Still have unanswered follow-ups from previous validations
+          const message = followUpStatus.incomplete.length === 1 
+            ? 'Please answer the follow-up question before submitting.'
+            : `Please answer the ${followUpStatus.incomplete.length} follow-up questions before submitting.`
           
-          // Scroll to the first unanswered follow-up question
-          const firstUnanswered = unansweredFollowUps[0]
+          showSubmissionNotification(message)
+          
+          // Scroll to first unanswered follow-up
+          const firstUnanswered = followUpStatus.incomplete[0]
           const element = document.getElementById(`question-${firstUnanswered.id}`)
           if (element) {
             element.scrollIntoView({ behavior: 'smooth', block: 'center' })
           }
           
-          // Show message to user
-          const message = unansweredFollowUps.length === 1 
-            ? 'Please answer the follow-up question before submitting.'
-            : `Please answer the ${unansweredFollowUps.length} follow-up questions before submitting.`
-          
-          // Show a temporary notification (you could replace this with a toast notification)
-          const notification = document.createElement('div')
-          notification.className = 'fixed top-4 right-4 bg-yellow-100 border-l-4 border-yellow-500 p-4 rounded-lg shadow-lg z-50'
-          notification.innerHTML = `
-            <div class="flex items-center">
-              <svg class="w-5 h-5 text-yellow-500 mr-3" fill="currentColor" viewBox="0 0 20 20">
-                <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
-              </svg>
-              <span class="text-yellow-800">${message}</span>
-            </div>
-          `
-          document.body.appendChild(notification)
-          
-          // Remove notification after 4 seconds
-          setTimeout(() => {
-            if (document.body.contains(notification)) {
-              document.body.removeChild(notification)
-            }
-          }, 4000)
-          
+          setSubmissionStatus('halted')
+          console.log('⛔ SUBMISSION HALTED - Unanswered follow-ups exist')
           return // Stop submission
+        } else {
+          console.log('✅ All follow-up questions answered, proceeding...')
         }
       }
 
-      // Submit survey to backend
+      // STEP 5: All validations passed - proceed with submission
+      console.log('🎉 ALL VALIDATIONS PASSED - PROCEEDING WITH SUBMISSION!')
+      setSubmissionStatus('submitting')
       const submissionData = await submitSurvey(answers, config)
+      console.log('✅ Survey submitted successfully:', submissionData)
       
       if (onSubmissionComplete) {
         onSubmissionComplete(submissionData)
@@ -243,15 +411,182 @@ export default function SurveyForm({
       
     } catch (error) {
       console.error('Survey submission error:', error)
-      alert('Failed to submit survey. Please try again.')
+      showSubmissionNotification('Failed to submit survey. Please try again.')
     } finally {
-      setIsSubmitting(false)
+      setSubmissionStatus('idle')
     }
-  }, [validationTrigger, config.questions, config, answers, validateAnswer, onSubmissionComplete])
+  }, [
+    validationTrigger, 
+    config, 
+    answers, 
+    selectedModel, 
+    onSubmissionComplete,
+    updateAnswersWithValidationResults,
+    injectFollowUpQuestions,
+    showSubmissionNotification
+  ])
+
+  // Pure functions for validation logic (CARD_1)
+  const parseValidationResponse = (
+    response: { isValid: boolean; followUpQuestion?: string },
+    questionId: string,
+    question: string, 
+    answer: string
+  ): ValidationResult => {
+    return {
+      questionId,
+      isValid: response.isValid,
+      followUpQuestion: response.followUpQuestion,
+      originalQuestion: question,
+      originalAnswer: answer
+    }
+  }
+
+  const hasFollowUpQuestions = (results: ValidationResult[]): boolean => {
+    return results.some(result => result.followUpQuestion !== undefined && result.followUpQuestion.trim().length > 0)
+  }
+
+  const findScoreAnswer = (answers: Record<string, Answer>) => {
+    const scoreAnswer = config.questions.find(q => q.type === 'single-choice')
+    if (!scoreAnswer) return undefined
+    const scoreValue = answers[scoreAnswer.id]?.value
+    return Array.isArray(scoreValue) ? scoreValue[0] : scoreValue
+  }
+
+  const createFollowUpQuestion = (validationResult: ValidationResult): Question => {
+    return {
+      id: `${validationResult.questionId}-followup-${Date.now()}`,
+      type: 'text',
+      question: validationResult.followUpQuestion!,
+      required: true
+    }
+  }
+
+  // New batch validation function (CARD_1)
+  const validateAnswersBatch = async (
+    questionsToValidate: Array<{questionId: string, question: string, answer: string}>,
+    selectedModel: string,
+    existingAnswers: Record<string, Answer>
+  ): Promise<BatchValidationResult> => {
+    const results: ValidationResult[] = []
+    const errors: string[] = []
+    
+    // Validate each question and collect results
+    const validationPromises = questionsToValidate.map(async (item) => {
+      try {
+        const scoreAnswer = findScoreAnswer(existingAnswers)
+        const response = await validateAnswerAPI(
+          item.question, 
+          item.answer, 
+          selectedModel as 'chatgpt' | 'gemini', 
+          scoreAnswer
+        )
+        
+        return parseValidationResponse(response, item.questionId, item.question, item.answer)
+      } catch (error) {
+        errors.push(`Failed to validate question ${item.questionId}: ${error instanceof Error ? error.message : 'Unknown error'}`)
+        return {
+          questionId: item.questionId,
+          isValid: undefined,
+          error: error instanceof Error ? error.message : 'Unknown error',
+          originalQuestion: item.question,
+          originalAnswer: item.answer
+        } as ValidationResult
+      }
+    })
+    
+    const validationResults = await Promise.all(validationPromises)
+    results.push(...validationResults)
+    
+    return {
+      results,
+      hasFollowUps: hasFollowUpQuestions(results),
+      errors,
+      completedCount: results.filter(r => r.error === undefined).length,
+      totalCount: results.length
+    }
+  }
+
+  // Follow-up question utility functions (CARD_4)
+  const isFollowUpQuestion = (questionId: string): boolean => {
+    return questionId.includes('-followup-')
+  }
+
+  const getFollowUpQuestionsFromConfig = (questions: Question[]): Question[] => {
+    return questions.filter(q => isFollowUpQuestion(q.id))
+  }
+
+  interface FollowUpValidationResult {
+    questionId: string
+    isComplete: boolean
+    hasContent: boolean
+    textLength: number
+  }
+
+  const validateFollowUpAnswer = (questionId: string, answer: string | string[]): FollowUpValidationResult => {
+    const text = Array.isArray(answer) ? answer.join(' ') : answer
+    const trimmedText = text.trim()
+    
+    return {
+      questionId,
+      isComplete: trimmedText.length > 0,
+      hasContent: trimmedText.length > 0,
+      textLength: trimmedText.length
+    }
+  }
+
+  const validateAllFollowUpAnswers = (
+    questions: Question[], 
+    answers: Record<string, Answer>
+  ): FollowUpValidationResult[] => {
+    const followUpQuestions = getFollowUpQuestionsFromConfig(questions)
+    
+    return followUpQuestions.map(question => {
+      const answer = answers[question.id]
+      const answerValue = answer?.value || ''
+      return validateFollowUpAnswer(question.id, answerValue)
+    })
+  }
+
+  interface FollowUpStatus {
+    total: number
+    completed: number
+    incomplete: Question[]
+    allComplete: boolean
+    completionRate: number
+  }
+
+  const getFollowUpCompletionStatus = (
+    questions: Question[], 
+    answers: Record<string, Answer>
+  ): FollowUpStatus => {
+    const followUpQuestions = getFollowUpQuestionsFromConfig(questions)
+    const validationResults = validateAllFollowUpAnswers(questions, answers)
+    
+    const completed = validationResults.filter(result => result.isComplete).length
+    const incomplete = followUpQuestions.filter(question => {
+      const validation = validationResults.find(v => v.questionId === question.id)
+      return !validation || !validation.isComplete
+    })
+    
+    return {
+      total: followUpQuestions.length,
+      completed,
+      incomplete,
+      allComplete: incomplete.length === 0,
+      completionRate: followUpQuestions.length > 0 ? Math.round((completed / followUpQuestions.length) * 100) : 100
+    }
+  }
+
 
   const renderQuestion = (question: Question) => {
     const answer = answers[question.id]
-    const isFollowUp = question.id.includes('followup')
+    const isFollowUp = isFollowUpQuestion(question.id)
+    
+    // For follow-up questions, determine completion status
+    const followUpValidation = isFollowUp 
+      ? validateFollowUpAnswer(question.id, answer?.value || '')
+      : null
 
     return (
       <div
@@ -263,10 +598,19 @@ export default function SurveyForm({
             : 'bg-white border border-gray-200 hover:border-gray-300 shadow-sm hover:shadow-md rounded-2xl p-6 relative'
         }`}
       >
+        {/* Follow-up indicator */}
         {isFollowUp && (
           <div className="absolute -left-3 top-1/2 -translate-y-1/2">
-            <div className="w-6 h-6 bg-amber-400 rounded-full flex items-center justify-center">
-              <MessageSquare className="w-3 h-3 text-white" />
+            <div className={`w-6 h-6 rounded-full flex items-center justify-center ${
+              followUpValidation?.isComplete 
+                ? 'bg-green-400' 
+                : 'bg-amber-400'
+            }`}>
+              {followUpValidation?.isComplete ? (
+                <CheckCircle className="w-3 h-3 text-white" />
+              ) : (
+                <MessageSquare className="w-3 h-3 text-white" />
+              )}
             </div>
           </div>
         )}
@@ -282,28 +626,47 @@ export default function SurveyForm({
             {isFollowUp && (
               <p className="text-sm text-amber-700 mt-1 flex items-center gap-1">
                 <Star className="w-3 h-3" />
-                Follow-up question based on your previous answer
+                {followUpValidation?.isComplete 
+                  ? 'Follow-up question completed' 
+                  : 'Follow-up question - please provide details'
+                }
               </p>
             )}
           </div>
           
+          {/* Status indicator */}
           <div className="flex-shrink-0 ml-4">
-            {question.type === 'text' && answer?.isValidating && (
+            {/* Original question validation status */}
+            {!isFollowUp && question.type === 'text' && answer?.isValidating && (
               <div className="flex items-center gap-2 px-3 py-1 bg-blue-100 rounded-full">
                 <Loader2 className="w-3 h-3 text-blue-600 animate-spin" />
                 <span className="text-xs text-blue-700 font-medium">Validating...</span>
               </div>
             )}
-            {question.type === 'text' && !answer?.isValidating && answer?.isValid === true && (
+            {!isFollowUp && question.type === 'text' && !answer?.isValidating && answer?.isValid === true && (
               <div className="flex items-center gap-2 px-3 py-1 bg-green-100 rounded-full">
                 <CheckCircle className="w-3 h-3 text-green-600" />
                 <span className="text-xs text-green-700 font-medium">Valid</span>
               </div>
             )}
-            {question.type === 'text' && !answer?.isValidating && answer?.isValid === false && (
+            {!isFollowUp && question.type === 'text' && !answer?.isValidating && answer?.isValid === false && (
               <div className="flex items-center gap-2 px-3 py-1 bg-red-100 rounded-full">
                 <AlertCircle className="w-3 h-3 text-red-600" />
                 <span className="text-xs text-red-700 font-medium">Needs more detail</span>
+              </div>
+            )}
+            
+            {/* Follow-up question completion status */}
+            {isFollowUp && followUpValidation?.isComplete && (
+              <div className="flex items-center gap-2 px-3 py-1 bg-green-100 rounded-full">
+                <CheckCircle className="w-3 h-3 text-green-600" />
+                <span className="text-xs text-green-700 font-medium">Complete</span>
+              </div>
+            )}
+            {isFollowUp && !followUpValidation?.isComplete && (
+              <div className="flex items-center gap-2 px-3 py-1 bg-amber-100 rounded-full">
+                <AlertCircle className="w-3 h-3 text-amber-600" />
+                <span className="text-xs text-amber-700 font-medium">Please answer</span>
               </div>
             )}
           </div>
@@ -460,15 +823,20 @@ export default function SurveyForm({
             
             <button
               type="submit"
-              disabled={isSubmitting || !backendConnected}
+              disabled={(submissionStatus === 'validating' || submissionStatus === 'submitting') || !backendConnected}
               className={`flex items-center gap-3 px-8 py-4 rounded-xl font-semibold transition-all duration-200 ${
-                isSubmitting || !backendConnected
+                (submissionStatus === 'validating' || submissionStatus === 'submitting') || !backendConnected
                   ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                  : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700 shadow-lg hover:shadow-xl'
+                  : submissionStatus === 'halted'
+                    ? 'bg-yellow-500 hover:bg-yellow-600 text-white'
+                    : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700 shadow-lg hover:shadow-xl'
               }`}
             >
-              {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
-              {isSubmitting ? 'Processing...' : 'Submit Survey'}
+              {(submissionStatus === 'validating' || submissionStatus === 'submitting') && <Loader2 className="w-4 h-4 animate-spin" />}
+              {submissionStatus === 'validating' && 'Validating...'}
+              {submissionStatus === 'submitting' && 'Submitting...'}
+              {submissionStatus === 'halted' && 'Complete Follow-ups First'}
+              {submissionStatus === 'idle' && 'Submit Survey'}
             </button>
           </div>
         </div>
@@ -480,6 +848,16 @@ export default function SurveyForm({
           This is a demonstration tool. Submitted answers are not stored.
         </p>
       </div>
+
+      {/* Notification Component (CARD_2) */}
+      {showNotification && (
+        <div className="fixed top-4 right-4 bg-yellow-100 border-l-4 border-yellow-500 p-4 rounded-lg shadow-lg z-50">
+          <div className="flex items-center">
+            <AlertTriangle className="w-5 h-5 text-yellow-500 mr-3" />
+            <span className="text-yellow-800">{notificationMessage}</span>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
