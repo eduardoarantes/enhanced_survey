@@ -1,0 +1,26 @@
+{
+  "validationTrigger": "submit",
+  "selectedModel": "gemini",
+  "questions": [
+    {
+      "id": "1",
+      "type": "single-choice",
+      "question": "Which score do you give to the service?",
+      "options": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5"
+      ],
+      "required": true
+    },
+    {
+      "id": "2",
+      "type": "text",
+      "question": "Why did you give this score?",
+      "required": true
+    }
+  ],
+  "lastModified": "2025-08-26T07:45:16.964Z"
+}
