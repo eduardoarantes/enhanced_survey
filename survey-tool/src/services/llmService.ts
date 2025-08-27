@@ -224,6 +224,7 @@ export interface ConfigurationData {
     question: string;
     options?: string[];
     required?: boolean;
+    enableLLMValidation?: boolean;
   }>;
   lastModified?: string;
 }
@@ -270,7 +271,8 @@ export async function loadConfiguration(): Promise<ConfigurationData> {
           id: '2',
           type: 'text',
           question: 'Why did you give this score?',
-          required: true
+          required: true,
+          enableLLMValidation: true
         }
       ]
     };

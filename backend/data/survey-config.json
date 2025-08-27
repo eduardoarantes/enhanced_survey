@@ -1,5 +1,5 @@
 {
-  "validationTrigger": "submit",
+  "validationTrigger": "blur",
   "selectedModel": "gemini",
   "followUpDisplayMode": "separate",
   "questions": [
@@ -20,8 +20,9 @@
       "id": "2",
       "type": "text",
       "question": "Why did you give this score?",
-      "required": true
+      "required": true,
+      "enableLLMValidation": true
     }
   ],
-  "lastModified": "2025-08-27T00:57:23.019Z"
+  "lastModified": "2025-08-27T07:16:16.300Z"
 }

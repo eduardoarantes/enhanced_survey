@@ -12,6 +12,7 @@ export interface Question {
   question: string
   options?: string[]
   required?: boolean
+  enableLLMValidation?: boolean
 }
 
 export interface SurveyConfig {
@@ -33,7 +34,8 @@ function App() {
         id: '2',
         type: 'text',
         question: 'Why did you give this score?',
-        required: true
+        required: true,
+        enableLLMValidation: true
       }
     ]
   })
@@ -52,7 +54,8 @@ function App() {
         id: '2',
         type: 'text',
         question: 'Why did you give this score?',
-        required: true
+        required: true,
+        enableLLMValidation: true
       }
     ]
   })

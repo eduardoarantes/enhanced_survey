@@ -463,8 +463,11 @@ export default function ConfigurationPanel({
           <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
             <p className="text-xs text-blue-700 font-medium mb-2">JSON Format:</p>
             <code className="text-xs text-blue-600 block">
-              {"{"}"questions": [{"{"}"id": "1", "type": "text|single-choice|multiple-choice", "question": "...", "options": [...], "required": true{"}"}]{"}"}
+              {"{"}"questions": [{"{"}"id": "1", "type": "text|single-choice|multiple-choice", "question": "...", "options": [...], "required": true, "enableLLMValidation": true{"}"}]{"}"}
             </code>
+            <div className="mt-2 text-xs text-blue-600">
+              <p><strong>enableLLMValidation</strong>: For text questions only. Set to false to disable AI validation for specific questions. Follow-up questions are automatically excluded from validation.</p>
+            </div>
           </div>
         </div>
       </div>

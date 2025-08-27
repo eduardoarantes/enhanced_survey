@@ -92,6 +92,23 @@ export default function SurveyForm({
   const validateAnswer = useCallback(async (questionId: string, answer: string) => {
     if (!answer.trim()) return
 
+    // Check if this is a follow-up question (never validate follow-up questions)
+    if (isFollowUpQuestion(questionId)) {
+      return
+    }
+
+    // Find the question and check if LLM validation is enabled
+    const question = config.questions.find(q => q.id === questionId)
+    if (!question) {
+      return
+    }
+    
+    // For text questions: validate if enableLLMValidation is undefined (default true) or explicitly true
+    // Skip validation only if enableLLMValidation is explicitly false
+    if (question.type === 'text' && question.enableLLMValidation === false) {
+      return
+    }
+
     // Check if session is throttled
     if (sessionStatus.requestsInWindow >= sessionStatus.maxRequests) {
       const timeToWait = sessionStatus.nextResetAt ? sessionStatus.nextResetAt - Date.now() : 60000
@@ -320,7 +337,11 @@ export default function SurveyForm({
         
         // STEP 1: Collect questions that need batch validation
         const questionsToValidate = config.questions
-          .filter(q => q.type === 'text')
+          .filter(q => 
+            q.type === 'text' && 
+            !isFollowUpQuestion(q.id) && // Skip follow-up questions
+            q.enableLLMValidation !== false // Skip only if explicitly set to false (undefined defaults to true)
+          )
           .map(question => ({
             questionId: question.id,
             question: question.question,
@@ -551,7 +572,8 @@ export default function SurveyForm({
       id: `${validationResult.questionId}-followup-${Date.now()}`,
       type: 'text',
       question: validationResult.followUpQuestion!,
-      required: true
+      required: true,
+      enableLLMValidation: false // Follow-up questions should never be validated with LLM
     }
   }
 
