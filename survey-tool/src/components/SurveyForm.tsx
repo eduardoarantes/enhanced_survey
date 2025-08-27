@@ -8,6 +8,7 @@ interface SurveyFormProps {
   setConfig: (config: SurveyConfig) => void
   validationTrigger: 'blur' | 'submit'
   selectedModel: 'chatgpt' | 'gemini'
+  followUpDisplayMode: 'separate' | 'inline'
   onSubmissionComplete?: (submissionData: SubmitSurveyResponse) => void
 }
 
@@ -48,6 +49,7 @@ export default function SurveyForm({
   setConfig,
   validationTrigger,
   selectedModel,
+  followUpDisplayMode,
   onSubmissionComplete
 }: SurveyFormProps) {
   console.log('🔥 SURVEYFORM COMPONENT LOADED - Debug Check')
@@ -59,6 +61,13 @@ export default function SurveyForm({
   const [submissionStatus, setSubmissionStatus] = useState<'idle' | 'validating' | 'halted' | 'submitting'>('idle')
   const [notificationMessage, setNotificationMessage] = useState<string>('')
   const [showNotification, setShowNotification] = useState(false)
+  
+  // State for inline mode validation tracking
+  const [questionValidationState, setQuestionValidationState] = useState<Record<string, {
+    needsMoreDetails: boolean;
+    followUpText: string;
+    isAdequate: boolean;
+  }>>({})
 
   // Check backend connectivity on mount
   useEffect(() => {
@@ -124,14 +133,39 @@ export default function SurveyForm({
         console.error('Failed to update session status:', error)
       }
 
-      // If insufficient, add follow-up question using pure function
+      // Handle follow-up questions based on display mode
       if (!validationResult.isValid && validationResult.followUpQuestion) {
-        const newQuestion = createFollowUpQuestion(validationResult)
+        if (followUpDisplayMode === 'separate') {
+          // Separate mode: create new question (existing behavior)
+          const newQuestion = createFollowUpQuestion(validationResult)
 
-        const questionIndex = config.questions.findIndex((q: Question) => q.id === questionId)
-        const newQuestions = [...config.questions]
-        newQuestions.splice(questionIndex + 1, 0, newQuestion)
-        setConfig({ ...config, questions: newQuestions })
+          const questionIndex = config.questions.findIndex((q: Question) => q.id === questionId)
+          const newQuestions = [...config.questions]
+          newQuestions.splice(questionIndex + 1, 0, newQuestion)
+          setConfig({ ...config, questions: newQuestions })
+        } else {
+          // Inline mode: update validation state for this question
+          setQuestionValidationState(prev => ({
+            ...prev,
+            [questionId]: {
+              needsMoreDetails: true,
+              followUpText: validationResult.followUpQuestion || '',
+              isAdequate: false
+            }
+          }))
+        }
+      } else if (validationResult.isValid) {
+        // Question is adequate - mark as such in inline mode
+        if (followUpDisplayMode === 'inline') {
+          setQuestionValidationState(prev => ({
+            ...prev,
+            [questionId]: {
+              needsMoreDetails: false,
+              followUpText: '',
+              isAdequate: true
+            }
+          }))
+        }
       }
     } catch (error) {
       console.error('Validation error:', error)
@@ -340,26 +374,47 @@ export default function SurveyForm({
           const followUpQuestions = getFollowUpQuestions(batchResults!.results)
           console.log('📝 Generated follow-up questions:', followUpQuestions)
           
-          // Inject follow-up questions into config
-          injectFollowUpQuestions(followUpQuestions)
-          
-          // Show notification to user
-          const message = followUpQuestions.length === 1 
-            ? 'A follow-up question has been added. Please answer it before submitting.'
-            : `${followUpQuestions.length} follow-up questions have been added. Please answer them before submitting.`
-          
-          showSubmissionNotification(message)
-          
-          // Scroll to first follow-up question
-          setTimeout(() => {
-            const firstFollowUp = followUpQuestions[0]
-            if (firstFollowUp) {
-              const element = document.getElementById(`question-${firstFollowUp.id}`)
-              if (element) {
-                element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          if (followUpDisplayMode === 'separate') {
+            // Separate mode: inject follow-up questions into config (existing behavior)
+            injectFollowUpQuestions(followUpQuestions)
+            
+            // Show notification to user
+            const message = followUpQuestions.length === 1 
+              ? 'A follow-up question has been added. Please answer it before submitting.'
+              : `${followUpQuestions.length} follow-up questions have been added. Please answer them before submitting.`
+            
+            showSubmissionNotification(message)
+            
+            // Scroll to first follow-up question
+            setTimeout(() => {
+              const firstFollowUp = followUpQuestions[0]
+              if (firstFollowUp) {
+                const element = document.getElementById(`question-${firstFollowUp.id}`)
+                if (element) {
+                  element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                }
               }
-            }
-          }, 100) // Small delay to ensure DOM is updated
+            }, 100) // Small delay to ensure DOM is updated
+          } else {
+            // Inline mode: update validation state for questions needing more details
+            const newValidationState = { ...questionValidationState }
+            followUpQuestions.forEach(fq => {
+              const originalQuestionId = fq.id.split('-followup-')[0]
+              newValidationState[originalQuestionId] = {
+                needsMoreDetails: true,
+                followUpText: fq.question,
+                isAdequate: false
+              }
+            })
+            setQuestionValidationState(newValidationState)
+            
+            // Show notification for inline mode
+            const message = followUpQuestions.length === 1
+              ? 'Please provide more details for the highlighted question before submitting.'
+              : `Please provide more details for the ${followUpQuestions.length} highlighted questions before submitting.`
+            
+            showSubmissionNotification(message)
+          }
           
           setSubmissionStatus('halted')
           console.log('⛔ SUBMISSION HALTED - Returning from handleSubmit')
@@ -368,32 +423,65 @@ export default function SurveyForm({
           console.log('✅ No new follow-ups detected, continuing...')
         }
 
-        // STEP 4: Check for unanswered existing follow-up questions
+        // STEP 4: Check for inadequate questions based on display mode
         console.log('🔍 Checking for existing unanswered follow-ups...')
-        const followUpStatus = getFollowUpCompletionStatus(config.questions, answers)
-        console.log('📊 Follow-up status:', followUpStatus)
+        
+        if (followUpDisplayMode === 'separate') {
+          // Separate mode: check for unanswered follow-up questions
+          const followUpStatus = getFollowUpCompletionStatus(config.questions, answers)
+          console.log('📊 Follow-up status:', followUpStatus)
 
-        if (followUpStatus.total > 0 && !followUpStatus.allComplete) {
-          console.log('⛔ HALTING SUBMISSION - Unanswered follow-ups exist!')
-          // Still have unanswered follow-ups from previous validations
-          const message = followUpStatus.incomplete.length === 1 
-            ? 'Please answer the follow-up question before submitting.'
-            : `Please answer the ${followUpStatus.incomplete.length} follow-up questions before submitting.`
-          
-          showSubmissionNotification(message)
-          
-          // Scroll to first unanswered follow-up
-          const firstUnanswered = followUpStatus.incomplete[0]
-          const element = document.getElementById(`question-${firstUnanswered.id}`)
-          if (element) {
-            element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          if (followUpStatus.total > 0 && !followUpStatus.allComplete) {
+            console.log('⛔ HALTING SUBMISSION - Unanswered follow-ups exist!')
+            // Still have unanswered follow-ups from previous validations
+            const message = followUpStatus.incomplete.length === 1 
+              ? 'Please answer the follow-up question before submitting.'
+              : `Please answer the ${followUpStatus.incomplete.length} follow-up questions before submitting.`
+            
+            showSubmissionNotification(message)
+            
+            // Scroll to first unanswered follow-up
+            const firstUnanswered = followUpStatus.incomplete[0]
+            const element = document.getElementById(`question-${firstUnanswered.id}`)
+            if (element) {
+              element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+            }
+            
+            setSubmissionStatus('halted')
+            console.log('⛔ SUBMISSION HALTED - Unanswered follow-ups exist')
+            return // Stop submission
+          } else {
+            console.log('✅ All follow-up questions answered, proceeding...')
           }
-          
-          setSubmissionStatus('halted')
-          console.log('⛔ SUBMISSION HALTED - Unanswered follow-ups exist')
-          return // Stop submission
         } else {
-          console.log('✅ All follow-up questions answered, proceeding...')
+          // Inline mode: check for questions that need more details
+          const inadequateQuestions = Object.entries(questionValidationState)
+            .filter(([_, state]) => state.needsMoreDetails && !state.isAdequate)
+            .map(([questionId, _]) => questionId)
+          
+          console.log('📊 Inline validation status:', questionValidationState)
+          console.log('⚠️ Questions needing more details:', inadequateQuestions)
+
+          if (inadequateQuestions.length > 0) {
+            console.log('⛔ HALTING SUBMISSION - Questions need more details!')
+            const message = inadequateQuestions.length === 1 
+              ? 'Please provide more details for the highlighted question before submitting.'
+              : `Please provide more details for the ${inadequateQuestions.length} highlighted questions before submitting.`
+            
+            showSubmissionNotification(message)
+            
+            // Scroll to first question needing details
+            const element = document.getElementById(`question-${inadequateQuestions[0]}`)
+            if (element) {
+              element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+            }
+            
+            setSubmissionStatus('halted')
+            console.log('⛔ SUBMISSION HALTED - Questions need more details')
+            return // Stop submission
+          } else {
+            console.log('✅ All questions have adequate details, proceeding...')
+          }
         }
       }
 
@@ -583,9 +671,19 @@ export default function SurveyForm({
     const answer = answers[question.id]
     const isFollowUp = isFollowUpQuestion(question.id)
     
-    // For follow-up questions, determine completion status
+    // Skip rendering follow-up questions in inline mode
+    if (followUpDisplayMode === 'inline' && isFollowUp) {
+      return null
+    }
+    
+    // For follow-up questions in separate mode, determine completion status
     const followUpValidation = isFollowUp 
       ? validateFollowUpAnswer(question.id, answer?.value || '')
+      : null
+      
+    // For inline mode, get validation state for this question
+    const inlineValidationState = followUpDisplayMode === 'inline' 
+      ? questionValidationState[question.id] 
       : null
 
     return (
@@ -594,7 +692,11 @@ export default function SurveyForm({
         id={`question-${question.id}`}
         className={`group transition-all duration-200 ${
           isFollowUp 
-            ? 'bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 shadow-sm rounded-2xl p-6 ml-6 relative' 
+            ? 'bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 shadow-sm rounded-2xl p-6 ml-6 relative'
+            : inlineValidationState?.needsMoreDetails
+            ? 'bg-gradient-to-r from-orange-50 to-red-50 border-2 border-orange-300 shadow-md rounded-2xl p-6 relative'
+            : inlineValidationState?.isAdequate
+            ? 'bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-300 shadow-sm rounded-2xl p-6 relative'
             : 'bg-white border border-gray-200 hover:border-gray-300 shadow-sm hover:shadow-md rounded-2xl p-6 relative'
         }`}
       >
@@ -615,14 +717,47 @@ export default function SurveyForm({
           </div>
         )}
 
+        {/* Inline mode validation indicator */}
+        {followUpDisplayMode === 'inline' && inlineValidationState && (
+          <div className="absolute -left-3 top-1/2 -translate-y-1/2">
+            <div className={`w-6 h-6 rounded-full flex items-center justify-center ${
+              inlineValidationState.isAdequate 
+                ? 'bg-green-500' 
+                : inlineValidationState.needsMoreDetails
+                ? 'bg-orange-500'
+                : 'bg-gray-400'
+            }`}>
+              {inlineValidationState.isAdequate ? (
+                <CheckCircle className="w-3 h-3 text-white" />
+              ) : inlineValidationState.needsMoreDetails ? (
+                <AlertTriangle className="w-3 h-3 text-white" />
+              ) : (
+                <MessageSquare className="w-3 h-3 text-white" />
+              )}
+            </div>
+          </div>
+        )}
+
         <div className="flex items-start justify-between mb-4">
           <div className="flex-1">
             <h3 className={`text-lg font-semibold leading-relaxed ${
-              isFollowUp ? 'text-amber-900' : 'text-gray-900'
+              isFollowUp 
+                ? 'text-amber-900'
+                : inlineValidationState?.needsMoreDetails
+                ? 'text-orange-900'
+                : inlineValidationState?.isAdequate
+                ? 'text-green-900'
+                : 'text-gray-900'
             }`}>
               {question.question}
+              {/* Inline mode: add helper text to question title */}
+              {followUpDisplayMode === 'inline' && inlineValidationState?.needsMoreDetails && (
+                <span className="text-orange-600 font-normal"> (Please provide more specific details)</span>
+              )}
               {question.required && <span className="text-red-500 ml-1 text-xl">*</span>}
             </h3>
+            
+            {/* Separate mode: follow-up question indicator */}
             {isFollowUp && (
               <p className="text-sm text-amber-700 mt-1 flex items-center gap-1">
                 <Star className="w-3 h-3" />
@@ -631,6 +766,26 @@ export default function SurveyForm({
                   : 'Follow-up question - please provide details'
                 }
               </p>
+            )}
+            
+            {/* Inline mode: validation helper text */}
+            {followUpDisplayMode === 'inline' && inlineValidationState && (
+              <div className="mt-2">
+                {inlineValidationState.needsMoreDetails && (
+                  <p className="text-sm text-orange-700 bg-orange-100 border border-orange-200 rounded-lg px-3 py-2 flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-orange-600 flex-shrink-0 mt-0.5" />
+                    <span>
+                      <strong>More details needed:</strong> {inlineValidationState.followUpText}
+                    </span>
+                  </p>
+                )}
+                {inlineValidationState.isAdequate && (
+                  <p className="text-sm text-green-700 bg-green-100 border border-green-200 rounded-lg px-3 py-2 flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-green-600" />
+                    <span>Thank you for the detailed response!</span>
+                  </p>
+                )}
+              </div>
             )}
           </div>
           

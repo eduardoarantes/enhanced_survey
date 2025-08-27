@@ -217,6 +217,7 @@ export async function updateLLMPrompt(promptData: LLMPromptData): Promise<boolea
 export interface ConfigurationData {
   validationTrigger: 'blur' | 'submit';
   selectedModel: 'chatgpt' | 'gemini';
+  followUpDisplayMode: 'separate' | 'inline';
   questions: Array<{
     id: string;
     type: 'text' | 'single-choice' | 'multiple-choice';
@@ -256,6 +257,7 @@ export async function loadConfiguration(): Promise<ConfigurationData> {
     return {
       validationTrigger: 'blur',
       selectedModel: 'gemini',
+      followUpDisplayMode: 'separate',
       questions: [
         {
           id: '1',

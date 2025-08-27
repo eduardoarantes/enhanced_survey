@@ -13,6 +13,8 @@ interface ConfigurationPanelProps {
   setValidationTrigger: (trigger: 'blur' | 'submit') => void
   selectedModel: 'chatgpt' | 'gemini'
   setSelectedModel: (model: 'chatgpt' | 'gemini') => void
+  followUpDisplayMode: 'separate' | 'inline'
+  setFollowUpDisplayMode: (mode: 'separate' | 'inline') => void
   onClose?: () => void
   onSave?: () => Promise<boolean>
   hasUnsavedChanges?: boolean
@@ -27,6 +29,8 @@ export default function ConfigurationPanel({
   setValidationTrigger,
   selectedModel,
   setSelectedModel,
+  followUpDisplayMode,
+  setFollowUpDisplayMode,
   onClose,
   onSave,
   hasUnsavedChanges = false
@@ -257,6 +261,65 @@ export default function ConfigurationPanel({
             <option value="blur">On field blur (immediate)</option>
             <option value="submit">On form submit (batch)</option>
           </select>
+        </div>
+
+        {/* Follow-up Display Settings */}
+        <div className="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center">
+              <Sparkles className="w-5 h-5 text-orange-600" />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-gray-900">Follow-up Display Mode</h3>
+              <p className="text-xs text-gray-500">How to show follow-up questions when validation requires more details</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3">
+            {/* Separate Mode */}
+            <label 
+              className={`flex items-start gap-4 p-4 rounded-xl border-2 cursor-pointer transition-all duration-200 ${
+                followUpDisplayMode === 'separate'
+                  ? 'border-blue-500 bg-blue-50 shadow-sm'
+                  : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              <input
+                type="radio"
+                name="followUpDisplayMode"
+                value="separate"
+                checked={followUpDisplayMode === 'separate'}
+                onChange={(e) => setFollowUpDisplayMode(e.target.value as 'separate' | 'inline')}
+                className="w-5 h-5 text-blue-600 border-gray-300 focus:ring-blue-500 mt-0.5"
+              />
+              <div className="flex-1">
+                <div className="font-medium text-gray-900 mb-1">🔗 Separate Questions</div>
+                <p className="text-xs text-gray-600">Create additional question fields below the original (current behavior)</p>
+              </div>
+            </label>
+
+            {/* Inline Mode */}
+            <label 
+              className={`flex items-start gap-4 p-4 rounded-xl border-2 cursor-pointer transition-all duration-200 ${
+                followUpDisplayMode === 'inline'
+                  ? 'border-blue-500 bg-blue-50 shadow-sm'
+                  : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              <input
+                type="radio"
+                name="followUpDisplayMode"
+                value="inline"
+                checked={followUpDisplayMode === 'inline'}
+                onChange={(e) => setFollowUpDisplayMode(e.target.value as 'separate' | 'inline')}
+                className="w-5 h-5 text-blue-600 border-gray-300 focus:ring-blue-500 mt-0.5"
+              />
+              <div className="flex-1">
+                <div className="font-medium text-gray-900 mb-1">✏️ Inline Enhancement</div>
+                <p className="text-xs text-gray-600">Update original question text with visual indicators when more details are needed</p>
+              </div>
+            </label>
+          </div>
         </div>
 
         {/* LLM Prompt Section */}

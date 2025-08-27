@@ -42,6 +42,7 @@ function App() {
   })
   const [validationTrigger, setValidationTrigger] = useState<'blur' | 'submit'>('blur')
   const [selectedModel, setSelectedModel] = useState<'chatgpt' | 'gemini'>('gemini')
+  const [followUpDisplayMode, setFollowUpDisplayMode] = useState<'separate' | 'inline'>('separate')
   const [isConfigOpen, setIsConfigOpen] = useState(false)
   const [submissionData, setSubmissionData] = useState<SubmitSurveyResponse | null>(null)
   
@@ -58,6 +59,7 @@ function App() {
         setConfig({ questions: configData.questions })
         setValidationTrigger(configData.validationTrigger)
         setSelectedModel(configData.selectedModel)
+        setFollowUpDisplayMode(configData.followUpDisplayMode)
         setLastSavedConfig(configData)
         
         // Load LLM prompt
@@ -78,18 +80,20 @@ function App() {
       const currentConfig: ConfigurationData = {
         validationTrigger,
         selectedModel,
+        followUpDisplayMode,
         questions: config.questions
       }
       
       const hasChanges = JSON.stringify(currentConfig) !== JSON.stringify({
         validationTrigger: lastSavedConfig.validationTrigger,
         selectedModel: lastSavedConfig.selectedModel,
+        followUpDisplayMode: lastSavedConfig.followUpDisplayMode,
         questions: lastSavedConfig.questions
       })
       
       setHasUnsavedChanges(hasChanges)
     }
-  }, [config, validationTrigger, selectedModel, lastSavedConfig])
+  }, [config, validationTrigger, selectedModel, followUpDisplayMode, lastSavedConfig])
 
   const handleSubmissionComplete = (data: SubmitSurveyResponse) => {
     setSubmissionData(data)
@@ -106,6 +110,7 @@ function App() {
       const configToSave: ConfigurationData = {
         validationTrigger,
         selectedModel,
+        followUpDisplayMode,
         questions: config.questions
       }
       
@@ -189,6 +194,7 @@ function App() {
                 setConfig={setConfig}
                 validationTrigger={validationTrigger}
                 selectedModel={selectedModel}
+                followUpDisplayMode={followUpDisplayMode}
                 onSubmissionComplete={handleSubmissionComplete}
               />
             )}
@@ -211,6 +217,8 @@ function App() {
                   setValidationTrigger={setValidationTrigger}
                   selectedModel={selectedModel}
                   setSelectedModel={setSelectedModel}
+                  followUpDisplayMode={followUpDisplayMode}
+                  setFollowUpDisplayMode={setFollowUpDisplayMode}
                   onClose={handleConfigClose}
                   onSave={handleConfigSave}
                   hasUnsavedChanges={hasUnsavedChanges}

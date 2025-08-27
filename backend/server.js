@@ -464,6 +464,7 @@ const CONFIG_FILE_PATH = path.join(__dirname, 'data', 'survey-config.json');
 const DEFAULT_CONFIG = {
   validationTrigger: 'blur',
   selectedModel: 'gemini',
+  followUpDisplayMode: 'separate',
   questions: [
     {
       id: '1',
@@ -531,7 +532,7 @@ app.get('/api/config', (req, res) => {
 // Save configuration
 app.post('/api/config', (req, res) => {
   try {
-    const { validationTrigger, selectedModel, questions } = req.body;
+    const { validationTrigger, selectedModel, followUpDisplayMode, questions } = req.body;
     
     // Validate required fields
     if (!validationTrigger || !selectedModel || !questions) {
@@ -554,6 +555,15 @@ app.post('/api/config', (req, res) => {
       return res.status(400).json({
         error: 'Invalid model',
         message: 'selectedModel must be either "chatgpt" or "gemini"'
+      });
+    }
+
+    // Validate followUpDisplayMode (optional field with default)
+    const validFollowUpDisplayMode = followUpDisplayMode || 'separate';
+    if (!['separate', 'inline'].includes(validFollowUpDisplayMode)) {
+      return res.status(400).json({
+        error: 'Invalid followUpDisplayMode',
+        message: 'followUpDisplayMode must be either "separate" or "inline"'
       });
     }
 
@@ -593,6 +603,7 @@ app.post('/api/config', (req, res) => {
     const configData = {
       validationTrigger,
       selectedModel,
+      followUpDisplayMode: validFollowUpDisplayMode,
       questions,
       lastModified: new Date().toISOString()
     };
