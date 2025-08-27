@@ -19,6 +19,26 @@ export interface SurveyConfig {
 }
 
 function App() {
+  // Original configuration (persistent, saved to backend)
+  const [originalConfig, setOriginalConfig] = useState<SurveyConfig>({
+    questions: [
+      {
+        id: '1',
+        type: 'single-choice',
+        question: 'Which score do you give to the service?',
+        options: ['1', '2', '3', '4', '5'],
+        required: true
+      },
+      {
+        id: '2',
+        type: 'text',
+        question: 'Why did you give this score?',
+        required: true
+      }
+    ]
+  })
+  
+  // Current session configuration (includes follow-up questions, session-only)
   const [config, setConfig] = useState<SurveyConfig>({
     questions: [
       {
@@ -49,6 +69,7 @@ function App() {
   // Configuration persistence states
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const [lastSavedConfig, setLastSavedConfig] = useState<ConfigurationData | null>(null)
+  const [isSavingConfig, setIsSavingConfig] = useState(false)
 
   // Load configuration and LLM prompt from backend on mount
   useEffect(() => {
@@ -56,7 +77,9 @@ function App() {
       try {
         // Load configuration
         const configData = await loadConfiguration()
-        setConfig({ questions: configData.questions })
+        const loadedConfig = { questions: configData.questions }
+        setOriginalConfig(loadedConfig)
+        setConfig(loadedConfig) // Initialize session config with original
         setValidationTrigger(configData.validationTrigger)
         setSelectedModel(configData.selectedModel)
         setFollowUpDisplayMode(configData.followUpDisplayMode)
@@ -74,14 +97,14 @@ function App() {
     loadData()
   }, [])
 
-  // Track changes to detect unsaved modifications
+  // Track changes to detect unsaved modifications (only check original config, not session follow-ups)
   useEffect(() => {
     if (lastSavedConfig) {
       const currentConfig: ConfigurationData = {
         validationTrigger,
         selectedModel,
         followUpDisplayMode,
-        questions: config.questions
+        questions: originalConfig.questions // Use original config, not session config with follow-ups
       }
       
       const hasChanges = JSON.stringify(currentConfig) !== JSON.stringify({
@@ -93,43 +116,65 @@ function App() {
       
       setHasUnsavedChanges(hasChanges)
     }
-  }, [config, validationTrigger, selectedModel, followUpDisplayMode, lastSavedConfig])
+  }, [originalConfig, validationTrigger, selectedModel, followUpDisplayMode, lastSavedConfig])
+
+  // Sync session config when original config changes (e.g., from configuration panel)
+  useEffect(() => {
+    setConfig(originalConfig)
+  }, [originalConfig])
+
+  // Helper function to reset session config to original (removes follow-ups)
+  const resetSessionConfig = () => {
+    setConfig(originalConfig)
+  }
 
   const handleSubmissionComplete = (data: SubmitSurveyResponse) => {
     setSubmissionData(data)
     setIsConfigOpen(false)
+    // Reset session config to remove any follow-up questions for next session
+    resetSessionConfig()
   }
 
   const handleBackToSurvey = () => {
     setSubmissionData(null)
+    // Reset session config to remove any follow-up questions for fresh start
+    resetSessionConfig()
   }
 
-  // Handle configuration save
+  // Handle configuration save (only save original config, exclude follow-up questions)
   const handleConfigSave = async (): Promise<boolean> => {
     try {
+      setIsSavingConfig(true)
+      
       const configToSave: ConfigurationData = {
         validationTrigger,
         selectedModel,
         followUpDisplayMode,
-        questions: config.questions
+        questions: originalConfig.questions // Only save original questions, not session follow-ups
       }
       
       const { saveConfiguration } = await import('./services/llmService')
       await saveConfiguration(configToSave)
+      
+      // Update state synchronously before any close handlers can run
       setLastSavedConfig(configToSave)
       setHasUnsavedChanges(false)
+      
       console.log('Configuration saved successfully')
       return true
     } catch (error) {
       console.error('Failed to save configuration:', error)
       alert('Failed to save configuration. Please try again.')
       return false
+    } finally {
+      setIsSavingConfig(false)
     }
   }
 
   // Handle configuration panel close with unsaved changes check
-  const handleConfigClose = () => {
-    if (hasUnsavedChanges) {
+  const handleConfigClose = (isPostSave: boolean = false) => {
+    // Skip unsaved changes check if this is a post-save close OR if we're currently saving
+    if (!isPostSave && hasUnsavedChanges && !isSavingConfig) {
       const shouldClose = window.confirm(
         'You have unsaved changes. Are you sure you want to close without saving?'
       )
@@ -138,6 +183,11 @@ function App() {
       }
     }
     setIsConfigOpen(false)
+  }
+
+  // Wrapper for onClick events (e.g., backdrop click)
+  const handleConfigCloseClick = () => {
+    handleConfigClose(false)
   }
 
   return (
@@ -209,8 +259,8 @@ function App() {
             >
               <div className="h-full bg-white border-l border-gray-200 shadow-2xl">
                 <ConfigurationPanel
-                  config={config}
-                  setConfig={setConfig}
+                  config={originalConfig}
+                  setConfig={setOriginalConfig}
                   llmPrompt={llmPrompt}
                   setLlmPrompt={setLlmPrompt}
                   validationTrigger={validationTrigger}
@@ -231,7 +281,7 @@ function App() {
           {!submissionData && isConfigOpen && (
             <div
               className="fixed inset-0 top-16 bg-black/20 backdrop-blur-sm z-20"
-              onClick={handleConfigClose}
+              onClick={handleConfigCloseClick}
             />
           )}
         </div>

@@ -15,7 +15,7 @@ interface ConfigurationPanelProps {
   setSelectedModel: (model: 'chatgpt' | 'gemini') => void
   followUpDisplayMode: 'separate' | 'inline'
   setFollowUpDisplayMode: (mode: 'separate' | 'inline') => void
-  onClose?: () => void
+  onClose?: (isPostSave?: boolean) => void
   onSave?: () => Promise<boolean>
   hasUnsavedChanges?: boolean
 }
@@ -52,7 +52,17 @@ export default function ConfigurationPanel({
       }
       
       // Save main configuration
-      await onSave()
+      const saveSuccess = await onSave()
+      
+      // If configuration was saved successfully, close panel and refresh page
+      if (saveSuccess) {
+        // First close the panel without triggering unsaved changes popup
+        if (onClose) {
+          onClose(true) // Pass true to indicate this is a post-save close
+        }
+        // Reload the page immediately - the isSavingConfig flag will prevent popup
+        window.location.reload()
+      }
     } finally {
       setIsSaving(false)
     }
@@ -94,9 +104,12 @@ export default function ConfigurationPanel({
       savePromptToBackend()
     }
     if (onClose) {
-      onClose()
+      // Don't call onClose if we're in the middle of a save operation
+      if (!isSaving) {
+        onClose(false) // Pass false to indicate this is a manual close (not post-save)
+      }
     }
-  }, [promptChanged, savePromptToBackend, onClose])
+  }, [promptChanged, savePromptToBackend, onClose, isSaving])
 
   // Sync currentPrompt when llmPrompt changes from parent
   useEffect(() => {
