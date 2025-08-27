@@ -250,6 +250,11 @@ export default function SurveyForm({
     }, duration)
   }, [])
 
+  // Helper function to check if any answers are currently validating
+  const isAnyAnswerValidating = useCallback((): boolean => {
+    return Object.values(answers).some(answer => answer.isValidating === true)
+  }, [answers])
+
   const detectNewFollowUps = (validationResults: ValidationResult[]): boolean => {
     return validationResults.some(result => 
       result.followUpQuestion !== undefined && result.followUpQuestion.trim().length > 0
@@ -978,20 +983,21 @@ export default function SurveyForm({
             
             <button
               type="submit"
-              disabled={(submissionStatus === 'validating' || submissionStatus === 'submitting') || !backendConnected}
+              disabled={(submissionStatus === 'validating' || submissionStatus === 'submitting') || !backendConnected || (validationTrigger === 'blur' && isAnyAnswerValidating())}
               className={`flex items-center gap-3 px-8 py-4 rounded-xl font-semibold transition-all duration-200 ${
-                (submissionStatus === 'validating' || submissionStatus === 'submitting') || !backendConnected
+                (submissionStatus === 'validating' || submissionStatus === 'submitting') || !backendConnected || (validationTrigger === 'blur' && isAnyAnswerValidating())
                   ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                   : submissionStatus === 'halted'
                     ? 'bg-yellow-500 hover:bg-yellow-600 text-white'
                     : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700 shadow-lg hover:shadow-xl'
               }`}
             >
-              {(submissionStatus === 'validating' || submissionStatus === 'submitting') && <Loader2 className="w-4 h-4 animate-spin" />}
+              {((submissionStatus === 'validating' || submissionStatus === 'submitting') || (validationTrigger === 'blur' && isAnyAnswerValidating())) && <Loader2 className="w-4 h-4 animate-spin" />}
               {submissionStatus === 'validating' && 'Validating...'}
               {submissionStatus === 'submitting' && 'Submitting...'}
               {submissionStatus === 'halted' && 'Complete Follow-ups First'}
-              {submissionStatus === 'idle' && 'Submit Survey'}
+              {validationTrigger === 'blur' && isAnyAnswerValidating() && submissionStatus === 'idle' && 'Validating Answers...'}
+              {submissionStatus === 'idle' && !isAnyAnswerValidating() && 'Submit Survey'}
             </button>
           </div>
         </div>
