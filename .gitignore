@@ -5,3 +5,7 @@ backend/node_modules
 lottery-key-pair.pem
 .history
 .env
+
+# SonarCloud
+.sonar/
+.sonarqube/

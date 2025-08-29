@@ -631,25 +631,30 @@ app.post('/api/config', (req, res) => {
   }
 });
 
-// Cleanup old sessions periodically (every 5 minutes)
-setInterval(() => {
-  const now = Date.now();
-  const fiveMinutesAgo = now - 5 * 60 * 1000;
-  
-  for (const [sessionId, data] of sessionThrottling.entries()) {
-    const hasRecentRequests = data.requests.some(
-      timestamp => timestamp > fiveMinutesAgo
-    );
+// Only start the server and cleanup interval if not in test mode
+if (process.env.NODE_ENV !== 'test') {
+  // Cleanup old sessions periodically (every 5 minutes)
+  setInterval(() => {
+    const now = Date.now();
+    const fiveMinutesAgo = now - 5 * 60 * 1000;
     
-    if (!hasRecentRequests) {
-      sessionThrottling.delete(sessionId);
+    for (const [sessionId, data] of sessionThrottling.entries()) {
+      const hasRecentRequests = data.requests.some(
+        timestamp => timestamp > fiveMinutesAgo
+      );
+      
+      if (!hasRecentRequests) {
+        sessionThrottling.delete(sessionId);
+      }
     }
-  }
-  
-  console.log(`[${new Date().toISOString()}] Cleaned up old sessions. Active sessions: ${sessionThrottling.size}`);
-}, 5 * 60 * 1000);
+    
+    console.log(`[${new Date().toISOString()}] Cleaned up old sessions. Active sessions: ${sessionThrottling.size}`);
+  }, 5 * 60 * 1000);
 
-app.listen(PORT, () => {
-  console.log(`Survey backend service running on port ${PORT}`);
-  console.log(`Health check: http://localhost:${PORT}/health`);
-});
+  app.listen(PORT, () => {
+    console.log(`Survey backend service running on port ${PORT}`);
+    console.log(`Health check: http://localhost:${PORT}/health`);
+  });
+}
+
+module.exports = app;
