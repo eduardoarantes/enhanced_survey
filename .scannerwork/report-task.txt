@@ -1,0 +1,7 @@
+organization=eduardoarantes
+projectKey=eduardoarantes_enhanced_survey
+serverUrl=https://sonarcloud.io
+serverVersion=8.0.0.66641
+dashboardUrl=https://sonarcloud.io/dashboard?id=eduardoarantes_enhanced_survey
+ceTaskId=AZjzW-3lCfkl4Pjy2sNb
+ceTaskUrl=https://sonarcloud.io/api/ce/task?id=AZjzW-3lCfkl4Pjy2sNb
