@@ -135,6 +135,9 @@ const globalRateLimit = rateLimit({
 app.use(globalRateLimit);
 
 // Health check endpoint
+```javascript
+const { isValidOpenAIKey, isValidGoogleKey } = require('./api-key-validator'); //Helper functions for API key validation
+
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
@@ -145,36 +148,49 @@ app.get('/health', (req, res) => {
 
 // LLM validation proxy endpoint
 app.post('/api/validate', sessionRateLimit, async (req, res) => {
-  try {
-    const { question, answer, score = null, model = 'gemini' } = req.body;
-    const sessionId = req.headers['x-session-id'] || req.ip;
+  const { question, answer, score = null, model = 'gemini' } = req.body;
+  const sessionId = req.headers['x-session-id'] || req.ip;
 
-    // Validate required fields
-    if (!question || !answer) {
-      return res.status(400).json({
-        error: 'Missing required fields',
-        message: 'question and answer are required'
-      });
-    }
+  const missingFields = validateRequiredFields(question, answer);
+  if (missingFields) {
+    return res.status(400).json({ error: 'Missing required fields', message: missingFields });
+  }
 
-    // Get the current LLM prompt structure from file
-    const promptData = currentLLMPrompt;
-    
-    // Inject values into the user prompt template
-    const userPrompt = promptData.userPrompt
+  const userPrompt = buildUserPrompt(question, answer, score, currentLLMPrompt);
+
+  const isValidKey = validateAPIKey(model);
+  if (!isValidKey) {
+    return res.status(500).json({ error: 'Invalid API Key' });
+  }
+
+  // ...rest of the code (handling the API call and response)
+});
+
+function validateRequiredFields(question, answer){
+  if (!question || !answer) {
+    return 'question and answer are required';
+  }
+  return null;
+}
+
+function buildUserPrompt(question, answer, score, promptData) {
+  return promptData.userPrompt
       .replace('{question}', question)
       .replace('{score}', score || 'Not provided')
       .replace('{answer}', answer);
+}
 
-    // Validate model selection and API keys
-    const isValidOpenAIKey = process.env.OPENAI_API_KEY && 
-                           process.env.OPENAI_API_KEY !== 'your_openai_api_key_here' &&
-                           process.env.OPENAI_API_KEY.length > 10;
-    
-    const isValidGoogleKey = process.env.GOOGLE_API_KEY && 
-                           process.env.GOOGLE_API_KEY !== 'your_google_gemini_api_key_here' &&
-                           process.env.GOOGLE_API_KEY.length > 10;
 
+function validateAPIKey(model) {
+  if (model === 'gemini') {
+    return isValidGoogleKey();
+  } else if (model === 'openai') {
+    return isValidOpenAIKey();
+  }
+  return false; // Or throw an error for unsupported models
+}
+
+```
     if (model === 'chatgpt' && !isValidOpenAIKey) {
       return res.status(400).json({
         error: 'API key not configured',
